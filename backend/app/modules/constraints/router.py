@@ -9,10 +9,12 @@ from app.modules.constraints import service
 from app.modules.constraints.schemas import (
     FSAConstraintCreate,
     FSAConstraintRead,
+    FSAConstraintReview,
     FSAConstraintUpdate,
 )
 
 router = APIRouter(prefix="/fsa-constraints", tags=["FSA & Bridge Linkage"])
+
 
 
 @router.post("", response_model=FSAConstraintRead, status_code=status.HTTP_201_CREATED)
@@ -51,3 +53,11 @@ def update_constraint(record_id: uuid.UUID, payload: FSAConstraintUpdate, db: Se
     record = service.update_constraint(db, record_id, payload)
     db.commit()
     return record
+
+
+@router.post("/{record_id}/review", response_model=FSAConstraintRead)
+def review_constraint(record_id: uuid.UUID, payload: FSAConstraintReview, db: Session = Depends(get_db)):
+    record = service.review_constraint(db, record_id, payload)
+    db.commit()
+    return record
+

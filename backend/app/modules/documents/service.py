@@ -2,12 +2,15 @@
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationFailedError
 from app.modules.audit import service as audit_service
+from app.modules.constraints import repository as constraints_repository
+from app.modules.constraints.models import FSAConstraint
 from app.modules.documents import repository
+from app.modules.documents.fsa_bridge_parser import parse_fsa_bridge_pdf
 from app.modules.documents.models import DOCUMENT_TYPES, Document, VariableCost
 from app.modules.documents.storage import compute_sha256, save_file
 from app.modules.documents.variable_cost_parser import parse_variable_cost_pdf
@@ -198,3 +201,259 @@ def list_variable_costs(db: Session, **filters):
 
 def latest_variable_costs(db: Session) -> list[VariableCost]:
     return repository.latest_variable_cost_per_plant(db)
+
+
+def extract_fsa_bridge_document(db: Session, document_id: uuid.UUID) -> tuple[list[object], list[str]]:
+
+
+    document = get_document_or_404(db, document_id)
+    if document.document_type != "FSA_BRIDGE_LINKAGE_DOCUMENT":
+        raise ValidationFailedError(
+            f"Extraction is only supported for document type 'FSA_BRIDGE_LINKAGE_DOCUMENT', "
+            f"but got '{document.document_type}'."
+        )
+
+    try:
+        with open(document.storage_path, "rb") as f:
+            pdf_bytes = f.read()
+    except Exception as e:
+        raise ValidationFailedError(f"Failed to read file from storage: {e}") from e
+
+
+
+    # Parse using new parser
+    fiscal_year, extracted_rows, notes = parse_fsa_bridge_pdf(pdf_bytes)
+
+    # Clear previous extraction results if any to support idempotent re-extraction
+    db.execute(delete(FSAConstraint).where(FSAConstraint.document_id == document_id))
+    db.flush()
+
+    if not extracted_rows:
+        document.needs_review = True
+        document.review_status = "needs_review"
+        document.notes = "; ".join(notes) or "No constraint rows could be parsed."
+        db.flush()
+        return [], notes
+
+    created_records = []
+    any_needs_review = False
+
+    for row in extracted_rows:
+        # Resolve plant using exact name/alias matching
+        from app.modules.master_data.service import resolve_plant_by_name
+        plant = resolve_plant_by_name(db, row.raw_source_name)
+        plant_id = plant.id if plant else None
+
+        # Resolve coal company using exact name/code matching
+        coal_company_id = None
+        if row.coal_company:
+            from app.modules.master_data.models import CoalCompany
+            cc = db.execute(select(CoalCompany).where(
+                (CoalCompany.code == row.coal_company) | (CoalCompany.name == row.coal_company)
+            )).scalars().first()
+            if cc:
+                coal_company_id = cc.id
+
+        # Determine confidence and notes
+        confidence = row.extraction_confidence
+        notes_list = []
+        if not plant_id:
+            any_needs_review = True
+            confidence = 0.0
+            notes_list.append(f"Unresolved or ambiguous plant name: '{row.raw_source_name}'")
+
+        parser_note = "; ".join(notes_list) if notes_list else None
+
+        record = constraints_repository.create(
+            db,
+            constraint_type=row.constraint_type,
+            plant_id=plant_id,
+            coal_company_id=coal_company_id,
+            document_id=document.id,
+            annual_contract_quantity_mt=row.quantity_mt,
+            contract_start_date=None,
+            contract_end_date=row.valid_to,
+            is_active=False,
+
+            # new columns
+            fiscal_year=fiscal_year,
+            raw_source_name=row.raw_source_name,
+            coal_company=row.coal_company,
+            quantity_lac_mt=row.quantity_lac_mt,
+            quantity_mt=row.quantity_mt,
+            valid_to=row.valid_to,
+            remarks=row.remarks,
+            extraction_confidence=confidence,
+            parser_notes=parser_note,
+            status="PENDING_REVIEW"
+        )
+        created_records.append(record)
+
+    if any_needs_review:
+        document.needs_review = True
+        document.review_status = "needs_review"
+    else:
+        document.needs_review = False
+        document.review_status = "approved"
+
+    db.flush()
+
+    audit_service.record(
+        db,
+        entity_type="document",
+        entity_id=document.id,
+        action="extract",
+        after={
+            "document_type": document.document_type,
+            "records_extracted": len(created_records),
+            "any_needs_review": any_needs_review,
+        },
+    )
+
+    return created_records, notes
+
+
+def get_document_extraction(db: Session, document_id: uuid.UUID) -> tuple[Document, list[object]]:
+    from app.modules.constraints.models import FSAConstraint
+    from app.modules.landed_cost.models import LandedCost
+
+    document = get_document_or_404(db, document_id)
+    if document.document_type == "FSA_BRIDGE_LINKAGE_DOCUMENT":
+        stmt = select(FSAConstraint).where(FSAConstraint.document_id == document_id)
+        records = list(db.execute(stmt).scalars().all())
+    elif document.document_type == "LANDED_COST_DOCUMENT":
+        stmt = select(LandedCost).where(LandedCost.document_id == document_id)
+        records = list(db.execute(stmt).scalars().all())
+    else:
+        raise ValidationFailedError(
+            "Extraction is only supported for FSA_BRIDGE_LINKAGE_DOCUMENT or LANDED_COST_DOCUMENT."
+        )
+
+    return document, records
+
+
+def extract_landed_cost_document(db: Session, document_id: uuid.UUID) -> tuple[list[object], list[str]]:
+    from sqlalchemy import delete
+
+    from app.modules.documents.landed_cost_parser import parse_landed_cost_pdf
+    from app.modules.landed_cost.models import LandedCost
+
+    document = get_document_or_404(db, document_id)
+    if document.document_type != "LANDED_COST_DOCUMENT":
+        raise ValidationFailedError(
+            f"Extraction is only supported for document type 'LANDED_COST_DOCUMENT', "
+            f"but got '{document.document_type}'."
+        )
+
+    try:
+        with open(document.storage_path, "rb") as f:
+            pdf_bytes = f.read()
+    except Exception as e:
+        raise ValidationFailedError(f"Failed to read file from storage: {e}") from e
+
+    records, notes = parse_landed_cost_pdf(pdf_bytes)
+
+    # Idempotent re-extraction: clear any existing landed cost records for this document
+    db.execute(delete(LandedCost).where(LandedCost.document_id == document_id))
+    db.flush()
+
+    if not records:
+        document.needs_review = True
+        document.review_status = "needs_review"
+        document.notes = "; ".join(notes) or "No landed cost rows could be parsed."
+        db.flush()
+        return [], notes
+
+    created_records = []
+    any_needs_review = False
+
+    MAP_RAW_PLANT_TO_CODE = {
+        "atps": "ANPARA-A",
+        "a tps": "ANPARA-A",
+        "anpara-a": "ANPARA-A",
+        "btps": "ANPARA-B",
+        "b tps": "ANPARA-B",
+        "anpara-b": "ANPARA-B",
+        "dtps": "ANPARA-D",
+        "d tps": "ANPARA-D",
+        "anpara-d": "ANPARA-D"
+    }
+
+
+    for row in records:
+        # Resolve plant
+        plant_id = None
+        normalized_raw = row.raw_source_name.strip().lower()
+        plant_code = MAP_RAW_PLANT_TO_CODE.get(normalized_raw)
+        if plant_code:
+            plant = db.execute(select(Plant).where(Plant.plant_code == plant_code)).scalars().first()
+            if plant:
+                plant_id = plant.id
+
+        confidence = row.extraction_confidence
+        notes_list = []
+        if not plant_id:
+            confidence = 0.0
+            notes_list.append(f"Unresolved or ambiguous plant name: '{row.raw_source_name}'")
+
+        if row.parser_notes:
+            notes_list.append(row.parser_notes)
+
+        if confidence < 1.0:
+            any_needs_review = True
+
+        parser_note = "; ".join(notes_list) if notes_list else None
+
+        # Build landed cost DB record
+        record = LandedCost(
+            plant_id=plant_id,
+            supplier_id=None,
+            document_id=document.id,
+            basic_cost=None,
+            freight=None,
+            taxes=None,
+            other_cost=0.0,
+            total_landed_cost=row.total_landed_cost_rs_per_mt,
+            effective_from=row.effective_from,
+            effective_to=row.effective_to,
+            is_active=False,
+
+            # review fields
+            raw_source_name=row.raw_source_name,
+            weighted_avg_gcv_kcal_per_kg=row.weighted_avg_gcv_kcal_per_kg,
+            cost_basis="CERTIFIED_WEIGHTED_AVERAGE",
+            extraction_confidence=confidence,
+            parser_notes=parser_note,
+            status="PENDING_REVIEW",
+            needs_review=(plant_id is None or confidence < 1.0)
+        )
+
+        db.add(record)
+        created_records.append(record)
+
+    if any_needs_review or len(notes) > 0:
+        document.needs_review = True
+        document.review_status = "needs_review"
+    else:
+        document.needs_review = False
+        document.review_status = "approved"
+
+    db.flush()
+
+    # Log audit event
+    audit_service.record(
+        db,
+        entity_type="document",
+        entity_id=document.id,
+        action="extract_landed_cost",
+        before={"extracted": False},
+        after={
+            "extracted": True,
+            "record_count": len(created_records),
+            "notes": notes,
+        },
+    )
+
+    return created_records, notes
+
+

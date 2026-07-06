@@ -20,3 +20,5 @@ uploads/
 .vscode/
 .DS_Store
 Thumbs.db
+
+backend/test_data/

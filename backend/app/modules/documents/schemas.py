@@ -4,15 +4,22 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.modules.constraints.schemas import FSAConstraintRead
+from app.modules.landed_cost.schemas import LandedCostRead
+
 DocumentType = Literal[
     "FSA",
     "BRIDGE_LINKAGE",
+    "FSA_BRIDGE_LINKAGE_DOCUMENT",
+    "LANDED_COST_DOCUMENT",
     "LANDED_COST",
     "IPP_RULES",
     "GOVERNMENT_ORDER",
     "VARIABLE_COST_PDF",
     "OTHER",
 ]
+
+
 
 
 class DocumentRead(BaseModel):
@@ -53,3 +60,31 @@ class VariableCostUploadResult(BaseModel):
     parsed_rows: list[VariableCostRead]
     rows_needing_review: int
     parser_notes: list[str]
+
+
+class FSABridgeExtractionResult(BaseModel):
+    document_id: uuid.UUID
+    parsed_records: list[FSAConstraintRead]
+    parser_notes: list[str]
+
+
+class FSABridgeExtractionStatus(BaseModel):
+    document_id: uuid.UUID
+    extracted: bool
+    parsed_records: list[FSAConstraintRead]
+    parser_notes: list[str]
+
+
+class LandedCostExtractionResult(BaseModel):
+    document_id: uuid.UUID
+    parsed_records: list[LandedCostRead]
+    parser_notes: list[str]
+
+
+class LandedCostExtractionStatus(BaseModel):
+    document_id: uuid.UUID
+    extracted: bool
+    parsed_records: list[LandedCostRead]
+    parser_notes: list[str]
+
+

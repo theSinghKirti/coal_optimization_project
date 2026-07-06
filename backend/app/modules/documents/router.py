@@ -10,6 +10,10 @@ from app.modules.documents import service
 from app.modules.documents.schemas import (
     DocumentRead,
     DocumentType,
+    FSABridgeExtractionResult,
+    FSABridgeExtractionStatus,
+    LandedCostExtractionResult,
+    LandedCostExtractionStatus,
     VariableCostRead,
     VariableCostReviewUpdate,
     VariableCostUploadResult,
@@ -113,3 +117,60 @@ def review_variable_cost(vc_id: uuid.UUID, payload: VariableCostReviewUpdate, db
     vc = service.review_variable_cost(db, vc_id, plant_id=payload.plant_id, needs_review=payload.needs_review)
     db.commit()
     return vc
+
+
+@router.post(
+    "/documents/{document_id}/extract",
+    response_model=FSABridgeExtractionResult | LandedCostExtractionResult,
+    status_code=status.HTTP_201_CREATED,
+)
+def extract_document(document_id: uuid.UUID, db: Session = Depends(get_db)):
+    document = service.get_document_or_404(db, document_id)
+    if document.document_type == "FSA_BRIDGE_LINKAGE_DOCUMENT":
+        records, notes = service.extract_fsa_bridge_document(db, document_id)
+        db.commit()
+        return FSABridgeExtractionResult(
+            document_id=document_id,
+            parsed_records=records,
+            parser_notes=notes,
+        )
+    elif document.document_type == "LANDED_COST_DOCUMENT":
+        records, notes = service.extract_landed_cost_document(db, document_id)
+        db.commit()
+        return LandedCostExtractionResult(
+            document_id=document_id,
+            parsed_records=records,
+            parser_notes=notes,
+        )
+    else:
+        raise ValidationFailedError(
+            "Extraction is only supported for FSA_BRIDGE_LINKAGE_DOCUMENT or LANDED_COST_DOCUMENT."
+        )
+
+
+@router.get(
+    "/documents/{document_id}/extraction",
+    response_model=FSABridgeExtractionStatus | LandedCostExtractionStatus,
+)
+def get_document_extraction(document_id: uuid.UUID, db: Session = Depends(get_db)):
+    document, records = service.get_document_extraction(db, document_id)
+    if document.document_type == "FSA_BRIDGE_LINKAGE_DOCUMENT":
+        return FSABridgeExtractionStatus(
+            document_id=document_id,
+            extracted=len(records) > 0,
+            parsed_records=records,
+            parser_notes=[document.notes] if document.notes else [],
+        )
+    elif document.document_type == "LANDED_COST_DOCUMENT":
+        return LandedCostExtractionStatus(
+            document_id=document_id,
+            extracted=len(records) > 0,
+            parsed_records=records,
+            parser_notes=[document.notes] if document.notes else [],
+        )
+    else:
+        raise ValidationFailedError(
+            "Extraction is only supported for FSA_BRIDGE_LINKAGE_DOCUMENT or LANDED_COST_DOCUMENT."
+        )
+
+

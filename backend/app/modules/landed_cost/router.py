@@ -6,7 +6,12 @@ from sqlalchemy.orm import Session
 from app.common.pagination import Page, PageParams
 from app.core.database import get_db
 from app.modules.landed_cost import service
-from app.modules.landed_cost.schemas import LandedCostCreate, LandedCostRead, LandedCostUpdate
+from app.modules.landed_cost.schemas import (
+    LandedCostCreate,
+    LandedCostRead,
+    LandedCostReview,
+    LandedCostUpdate,
+)
 
 router = APIRouter(prefix="/landed-costs", tags=["Landed Cost"])
 
@@ -16,6 +21,11 @@ def create_landed_cost(payload: LandedCostCreate, db: Session = Depends(get_db))
     record = service.create_landed_cost(db, payload)
     db.commit()
     return record
+
+
+@router.get("/latest", response_model=list[LandedCostRead])
+def latest_landed_costs(db: Session = Depends(get_db)):
+    return service.latest_landed_costs(db)
 
 
 @router.get("", response_model=Page[LandedCostRead])
@@ -45,3 +55,11 @@ def update_landed_cost(record_id: uuid.UUID, payload: LandedCostUpdate, db: Sess
     record = service.update_landed_cost(db, record_id, payload)
     db.commit()
     return record
+
+
+@router.post("/{record_id}/review", response_model=LandedCostRead)
+def review_landed_cost(record_id: uuid.UUID, payload: LandedCostReview, db: Session = Depends(get_db)):
+    record = service.review_landed_cost(db, record_id, payload)
+    db.commit()
+    return record
+

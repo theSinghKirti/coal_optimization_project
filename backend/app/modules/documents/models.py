@@ -18,12 +18,16 @@ from app.core.database import Base
 DOCUMENT_TYPES = (
     "FSA",
     "BRIDGE_LINKAGE",
+    "FSA_BRIDGE_LINKAGE_DOCUMENT",
+    "LANDED_COST_DOCUMENT",
     "LANDED_COST",
     "IPP_RULES",
     "GOVERNMENT_ORDER",
     "VARIABLE_COST_PDF",
     "OTHER",
 )
+
+
 
 
 class Document(Base, UUIDPKMixin, TimestampMixin):

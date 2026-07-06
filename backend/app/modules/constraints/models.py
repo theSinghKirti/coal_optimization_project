@@ -18,10 +18,10 @@ class FSAConstraint(Base, UUIDPKMixin, TimestampMixin):
 
     constraint_type: Mapped[str] = mapped_column(String(32), nullable=False, default="FSA")
 
-    plant_id: Mapped[uuid.UUID] = mapped_column(
+    plant_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("plants.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     supplier_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -34,14 +34,28 @@ class FSAConstraint(Base, UUIDPKMixin, TimestampMixin):
         PG_UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True
     )
 
-    annual_contract_quantity_mt: Mapped[float] = mapped_column(Numeric(16, 3), nullable=False)
+    annual_contract_quantity_mt: Mapped[float | None] = mapped_column(Numeric(16, 3), nullable=True)
     monthly_cap_mt: Mapped[float | None] = mapped_column(Numeric(16, 3), nullable=True)
 
-    contract_start_date: Mapped[date] = mapped_column(Date, nullable=False)
-    contract_end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    contract_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    contract_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+    # Added columns for draft PDF extraction
+    fiscal_year: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    raw_source_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    coal_company: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    quantity_lac_mt: Mapped[float | None] = mapped_column(Numeric(16, 4), nullable=True)
+    quantity_mt: Mapped[float | None] = mapped_column(Numeric(16, 3), nullable=True)
+    valid_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    remarks: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    extraction_confidence: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+    parser_notes: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="PENDING_REVIEW", nullable=False)
+
     plant = relationship("Plant")
     supplier = relationship("Supplier")
-    coal_company = relationship("CoalCompany")
+    coal_company_rel = relationship("CoalCompany")
+
+

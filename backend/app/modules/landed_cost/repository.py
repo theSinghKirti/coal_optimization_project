@@ -52,3 +52,16 @@ def list_active_for_plant(db: Session, plant_id: uuid.UUID, *, as_of: date) -> l
         (LandedCost.effective_to.is_(None)) | (LandedCost.effective_to >= as_of),
     )
     return list(db.execute(stmt).scalars().all())
+
+
+def latest_active_records(db: Session) -> list[LandedCost]:
+    stmt = select(LandedCost).where(LandedCost.is_active.is_(True)).order_by(LandedCost.effective_from.desc())
+    records = list(db.execute(stmt).scalars().all())
+
+    latest_by_plant = {}
+    for r in records:
+        if r.plant_id not in latest_by_plant:
+            latest_by_plant[r.plant_id] = r
+
+    return list(latest_by_plant.values())
+
