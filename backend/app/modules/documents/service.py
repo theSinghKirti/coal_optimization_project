@@ -15,23 +15,24 @@ from app.modules.master_data.models import Plant, PlantAlias
 
 
 def _build_known_plant_tokens(db: Session) -> dict[str, str]:
-    """Builds {lowercased alias/name -> canonical display name} from master data."""
+    """Builds {alias/name -> canonical display name} from master data."""
     tokens: dict[str, str] = {}
     plants = list(db.execute(select(Plant)).scalars().all())
     for plant in plants:
-        tokens[plant.plant_name.lower()] = plant.plant_name
-        tokens[plant.plant_code.lower()] = plant.plant_name
+        tokens[plant.plant_name] = plant.plant_name
+        tokens[plant.plant_code] = plant.plant_name
     aliases = list(db.execute(select(PlantAlias)).scalars().all())
     alias_by_plant = {p.id: p for p in plants}
     for alias in aliases:
         plant = alias_by_plant.get(alias.plant_id)
         if plant:
-            tokens[alias.alias_name.lower()] = plant.plant_name
+            tokens[alias.alias_name] = plant.plant_name
     return tokens
 
 
 def _resolve_plant_id_for_token(db: Session, matched_display_name: str) -> uuid.UUID | None:
-    plant = db.execute(select(Plant).where(Plant.plant_name == matched_display_name)).scalar_one_or_none()
+    from app.modules.master_data.service import resolve_plant_by_name
+    plant = resolve_plant_by_name(db, matched_display_name)
     return plant.id if plant else None
 
 
@@ -121,7 +122,7 @@ def upload_and_parse_variable_cost_pdf(
 
     created_rows: list[VariableCost] = []
     for row in parse_result.rows:
-        plant_id = _resolve_plant_id_for_token(db, row.source_plant_name) if row.confident else None
+        plant_id = _resolve_plant_id_for_token(db, row.matched_plant_token) if row.confident else None
         needs_review = not row.confident or plant_id is None
 
         vc = repository.create_variable_cost(

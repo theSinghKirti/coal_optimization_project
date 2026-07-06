@@ -22,19 +22,61 @@ from app.modules.master_data import repository  # noqa: E402
 # Extend this list as needed; the script is idempotent, so re-running after
 # adding entries only inserts the new ones.
 PLANTS = [
-    {"plant_code": "ANPARA", "plant_name": "Anpara Thermal Power Station"},
-    {"plant_code": "OBRA", "plant_name": "Obra Thermal Power Station"},
+    {"plant_code": "ANPARA-A", "plant_name": "Anpara-A Thermal Power Station"},
+    {"plant_code": "ANPARA-B", "plant_name": "Anpara-B Thermal Power Station"},
+    {"plant_code": "ANPARA-C", "plant_name": "Anpara-C Thermal Power Station"},
+    {"plant_code": "ANPARA-D", "plant_name": "Anpara-D Thermal Power Station"},
+    {"plant_code": "OBRA-B", "plant_name": "Obra-B Thermal Power Station"},
+    {"plant_code": "OBRA-C", "plant_name": "Obra-C Thermal Power Station"},
     {"plant_code": "HARDUAGANJ", "plant_name": "Harduaganj Thermal Power Station"},
+    {"plant_code": "HARDUAGANJ-EXT", "plant_name": "Harduaganj Ext. Thermal Power Station"},
+    {"plant_code": "HARDUAGANJ-EXT-II", "plant_name": "Harduaganj Ext. II Thermal Power Station"},
+    {"plant_code": "PARICHHA-EXT", "plant_name": "Parichha - Ext. Thermal Power Station"},
+    {"plant_code": "PARICHHA-EXT-STG-II", "plant_name": "Parichha - Ext. Stage - II Thermal Power Station"},
     {"plant_code": "PANKI", "plant_name": "Panki Thermal Power Station"},
-    {"plant_code": "PARICHHA", "plant_name": "Parichha Thermal Power Station"},
+    {"plant_code": "JAWAHARPUR", "plant_name": "Jawaharpur Thermal Power Station"},
 ]
 
 PLANT_ALIASES = {
-    "ANPARA": ["Anpara TPS", "Anpara 'A'", "M/s Anpara"],
-    "OBRA": ["Obra TPS", "Obra 'A'", "Obra 'C'"],
-    "HARDUAGANJ": ["Harduaganj TPS", "Kasimpur"],
-    "PANKI": ["Panki TPS"],
-    "PARICHHA": ["Parichha TPS"],
+    "ANPARA-A": [
+        "Anpara - A", "Anpara-A", "Anpara 'A'"
+    ],
+    "ANPARA-B": [
+        "Anpara - B", "Anpara-B", "Anpara 'B'"
+    ],
+    "ANPARA-C": [
+        "Anpara-C", "Anpara - C", "Anpara 'C'"
+    ],
+    "ANPARA-D": [
+        "Anpara-D", "Anpara - D", "Anpara 'D'"
+    ],
+    "OBRA-B": [
+        "OBRA-B", "OBRA - B", "Obra B", "Obra-B"
+    ],
+    "OBRA-C": [
+        "OBRA-C", "OBRA - C", "Obra C", "Obra-C", "Obra 'C'"
+    ],
+    "HARDUAGANJ": [
+        "Harduaganj", "Harduaganj TPS", "Kasimpur"
+    ],
+    "HARDUAGANJ-EXT": [
+        "Harduaganj Ext.", "Harduaganj Ext"
+    ],
+    "HARDUAGANJ-EXT-II": [
+        "Harduaganj Ext. II TPS", "Harduaganj Extn II"
+    ],
+    "PARICHHA-EXT": [
+        "Parichha - Ext.", "Parichha Ext.", "Parichha Ext"
+    ],
+    "PARICHHA-EXT-STG-II": [
+        "Parichha - Ext. Stage - II"
+    ],
+    "PANKI": [
+        "Panki", "Panki TPS"
+    ],
+    "JAWAHARPUR": [
+        "JAWAHARPUR", "Jawaharpur", "Jawaharpur TPS"
+    ],
 }
 
 COAL_COMPANIES = [

@@ -38,15 +38,23 @@ NON_UPRVUNL_KEYWORDS = (
 )
 
 
+def normalize_name(name: str) -> str:
+    """Normalize names by lowercasing and stripping all non-alphanumeric characters."""
+    val = name.lower()
+    return re.sub(r"[^a-z0-9]", "", val)
+
+
 @dataclass
 class ParsedRow:
     source_plant_name: str
     raw_line: str
     variable_cost_per_unit: float | None
-    effective_date: str | None  # ISO date string, or None
+    effective_date: str | None  # ISO date string, or None (will store effective_from)
     matched_plant_token: str
     confident: bool
     reason: str | None = None
+    effective_from: str | None = None
+    effective_to: str | None = None
 
 
 @dataclass
@@ -60,14 +68,37 @@ def extract_text_lines(pdf_bytes: bytes) -> list[str]:
     """Extract selectable text lines from every page using PyMuPDF only."""
     import fitz  # PyMuPDF – lazy import so a missing/blocked DLL doesn't crash startup
 
-    lines: list[str] = []
+    raw_lines: list[str] = []
     with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
         for page in doc:
             text = page.get_text("text")
             for raw_line in text.splitlines():
                 stripped = raw_line.strip()
                 if stripped:
-                    lines.append(stripped)
+                    raw_lines.append(stripped)
+
+    # Reconstruct lines where columns are split vertically
+    lines: list[str] = []
+    i = 0
+    while i < len(raw_lines):
+        line = raw_lines[i]
+        if i + 2 < len(raw_lines):
+            item1 = raw_lines[i]
+            item2 = raw_lines[i + 1]
+            item3 = raw_lines[i + 2]
+
+            # Check if item1 is a serial number (integer) and item3 is a number (float/int)
+            is_item1_int = re.match(r"^\d+$", item1)
+            is_item3_number = re.match(r"^\d+(?:\.\d+)?$", item3)
+
+            if is_item1_int and is_item3_number:
+                lines.append(f"{item1} {item2} {item3}")
+                i += 3
+                continue
+
+        lines.append(line)
+        i += 1
+
     return lines
 
 
@@ -101,6 +132,44 @@ def _extract_numbers(line: str) -> list[float]:
     return numbers
 
 
+def parse_line_components(line: str) -> tuple[str, float | None]:
+    """Extracts (raw_station_name, variable_cost) from a line.
+
+    Handles lines with or without a leading serial number.
+    """
+    line = line.strip()
+    if not line:
+        return "", None
+
+    # Find all numeric values
+    numbers = _extract_numbers(line)
+    if not numbers:
+        # If no numbers, the entire line is the station name, cost is None
+        return line, None
+
+    # The cost is the last number on the line
+    cost = numbers[-1]
+
+    # Find where the cost string starts in the raw line
+    # Match trailing float/number
+    cost_pattern = re.compile(r"\s+\d+(?:\.\d+)?$")
+    match = cost_pattern.search(line)
+    if match:
+        remainder = line[:match.start()].strip()
+    else:
+        # Fallback split
+        parts = line.split()
+        remainder = " ".join(parts[:-1])
+
+    # Now, check if there is a leading serial number
+    # If the remainder starts with an integer followed by space, we strip it
+    serial_match = re.match(r"^\d+\s+(.*)$", remainder)
+    if serial_match:
+        remainder = serial_match.group(1).strip()
+
+    return remainder, cost
+
+
 def parse_variable_cost_pdf(pdf_bytes: bytes, known_plant_tokens: dict[str, str]) -> ParseResult:
     """Parse a Variable Cost PDF deterministically.
 
@@ -122,58 +191,89 @@ def parse_variable_cost_pdf(pdf_bytes: bytes, known_plant_tokens: dict[str, str]
         result.notes.append("No selectable text found in PDF (may be a scanned/image-only document).")
         return result
 
+    # Extract date range from the entire text
+    full_text = "\n".join(lines)
+    date_range_pattern = re.compile(
+        r"effective\s+from\s+(\d{1,2})[-./](\d{1,2})[-./](\d{2,4})\s+to\s+(\d{1,2})[-./](\d{1,2})[-./](\d{2,4})",
+        re.IGNORECASE
+    )
+    date_match = date_range_pattern.search(full_text)
+    effective_from = None
+    effective_to = None
+    if date_match:
+        d1, m1, y1, d2, m2, y2 = date_match.groups()
+        if len(y1) == 2:
+            y1 = f"20{y1}"
+        if len(y2) == 2:
+            y2 = f"20{y2}"
+        try:
+            effective_from = f"{int(y1):04d}-{int(m1):02d}-{int(d1):02d}"
+            effective_to = f"{int(y2):04d}-{int(m2):02d}-{int(d2):02d}"
+        except ValueError:
+            pass
+
     for line in lines:
         line_lower = line.lower()
 
         if _looks_non_uprvunl(line_lower):
             continue  # explicitly excluded, never stored
 
-        matched_token = None
-        for token in known_plant_tokens:
-            if token in line_lower:
-                matched_token = token
-                break
-
-        if not matched_token:
-            continue  # not a plant row we recognize; ignore silently
-
-        numbers = _extract_numbers(line)
-        effective_date = _extract_date(line)
-
-        if not numbers:
-            result.rows.append(
-                ParsedRow(
-                    source_plant_name=known_plant_tokens[matched_token],
-                    raw_line=line,
-                    variable_cost_per_unit=None,
-                    effective_date=effective_date,
-                    matched_plant_token=matched_token,
-                    confident=False,
-                    reason="Plant name matched but no numeric Variable Cost value found on the line.",
-                )
-            )
+        raw_station_name, variable_cost = parse_line_components(line)
+        if not raw_station_name:
             continue
 
-        # Heuristic: the Variable Cost figure is typically the last standalone
-        # number on the row (preceding numbers are often plant/unit codes).
-        variable_cost = numbers[-1]
+        # Exact matching on normalized name
+        norm_station = normalize_name(raw_station_name)
+        matched_orig_token = None
+
+        # Look for exact normalized match
+        for tok in known_plant_tokens:
+            if normalize_name(tok) == norm_station:
+                matched_orig_token = tok
+                break
+
+        row_effective_date = effective_from if effective_from else _extract_date(line)
+
+        if not matched_orig_token:
+            # If it's not a recognized UPRVUNL row, check if it's potentially relevant.
+            # Relevant rows contain keywords: anpara, obra, harduaganj, parichha, panki, jawaharpur.
+            # If so, we save it as not confident (needs_review = True).
+            relevance_keywords = {"anpara", "obra", "harduaganj", "parichha", "panki", "jawaharpur"}
+            is_relevant = any(kw in norm_station for kw in relevance_keywords)
+            if is_relevant:
+                result.rows.append(
+                    ParsedRow(
+                        source_plant_name=raw_station_name,
+                        raw_line=line,
+                        variable_cost_per_unit=variable_cost,
+                        effective_date=row_effective_date,
+                        matched_plant_token="",
+                        confident=False,
+                        reason="Unrecognized or ambiguous plant/unit name.",
+                        effective_from=effective_from,
+                        effective_to=effective_to,
+                    )
+                )
+            continue
+
+        # Determine confidence
         confident = True
         reason = None
-        if len(numbers) > 1 and variable_cost > 50:
-            # Variable Cost in Rs/kWh is normally a small decimal; a large
-            # trailing number suggests we picked up a serial/code instead.
+        if variable_cost is None:
             confident = False
-            reason = "Multiple numeric tokens on the line; trailing value looks atypical for Rs/kWh."
+            reason = "No numeric Variable Cost value found on the line."
 
         result.rows.append(
             ParsedRow(
-                source_plant_name=known_plant_tokens[matched_token],
+                source_plant_name=raw_station_name,
                 raw_line=line,
                 variable_cost_per_unit=variable_cost,
-                effective_date=effective_date,
-                matched_plant_token=matched_token,
+                effective_date=row_effective_date,
+                matched_plant_token=matched_orig_token,
                 confident=confident,
                 reason=reason,
+                effective_from=effective_from,
+                effective_to=effective_to,
             )
         )
 
