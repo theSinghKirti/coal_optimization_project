@@ -1,0 +1,22 @@
+﻿# Root virtual environment
+.venv/
+venv/
+
+# Python cache and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Secrets
+.env
+.env.*
+
+# Runtime uploads/storage
+storage/
+uploads/
+
+# IDE / OS files
+.vscode/
+.DS_Store
+Thumbs.db
